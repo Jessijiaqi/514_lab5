@@ -6,11 +6,11 @@
 #include "addons/TokenHelper.h"
 #include "addons/RTDBHelper.h"
 
-// Network credentials
+// Provide the methods to sign in with email and password.
 const char* ssid = "UW MPSK";
 const char* password = "5kK_e!L3;d";
 
-// Firebase project credentials
+// Define the Firebase Realtime Database URL and API Key
 #define DATABASE_URL "https://lab5-8a917-default-rtdb.firebaseio.com"
 #define API_KEY "AIzaSyCvPg6cQ20Dtb-NDJuDqePviW62ztHV02w"
 
@@ -18,12 +18,11 @@ const char* password = "5kK_e!L3;d";
 const int trigPin = 2;
 const int echoPin = 3;
 
-// Sound speed in cm/usec
+// Define sound speed in cm/usec
 const float soundSpeed = 0.034;
 
-// Updated deep sleep and measurement intervals
-#define DEEP_SLEEP_INTERVAL 40 // Sleep for 40 seconds if no object detected
-#define MEASUREMENT_INTERVAL 1000 // Check every second
+// Define the deep sleep interval
+#define DEEP_SLEEP_INTERVAL 30 // Sleep for 30 seconds if no object is detected
 
 // Firebase Data object
 FirebaseData fbdo;
@@ -35,6 +34,7 @@ bool signedIn = false;
 
 void setup() {
   Serial.begin(115200);
+  
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
   
@@ -59,6 +59,17 @@ void setup() {
 }
 
 void loop() {
+  // This will never be called as we're using deep sleep
+}
+
+void goToDeepSleep(long timeInSeconds) {
+  Serial.printf("Entering deep sleep for %ld seconds...\n", timeInSeconds);
+  WiFi.disconnect(true);
+  esp_sleep_enable_timer_wakeup(timeInSeconds * 1000000ULL); // time in microseconds
+  esp_deep_sleep_start();
+}
+
+void wakeUpRoutine() {
   float distance = measureDistance();
 
   // If an object is detected within 60cm, send data to Firebase
@@ -68,10 +79,10 @@ void loop() {
       WiFi.reconnect();
     }
     sendDataToFirebase(distance);
-  } else {
-    // If no object detected within 60cm, go to deep sleep for 40 seconds
-    goToDeepSleep(DEEP_SLEEP_INTERVAL);
   }
+  
+  // Go back to deep sleep to save power
+  goToDeepSleep(DEEP_SLEEP_INTERVAL);
 }
 
 float measureDistance() {
@@ -92,7 +103,7 @@ float measureDistance() {
 }
 
 void sendDataToFirebase(float distance) {
-  if (millis() - sendDataPrevMillis > MEASUREMENT_INTERVAL) {
+  if (millis() - sendDataPrevMillis > uploadInterval) {
     sendDataPrevMillis = millis();
     
     if (Firebase.RTDB.setFloat(&fbdo, "/distance", distance)) {
@@ -104,9 +115,23 @@ void sendDataToFirebase(float distance) {
   }
 }
 
-void goToDeepSleep(long timeInSeconds) {
-  Serial.printf("Entering deep sleep for %ld seconds...\n", timeInSeconds);
-  WiFi.disconnect(true);
-  esp_sleep_enable_timer_wakeup(timeInSeconds * 1000000ULL);
-  esp_deep_sleep_start();
+// The ISR for the wake stub
+void RTC_IRAM_ATTR esp_wake_deep_sleep(void) {
+  esp_default_wake_deep_sleep();
+}
+
+extern "C" void app_main() {
+  // Setup the wake stub function
+  esp_set_deep_sleep_wake_stub(&esp_wake_deep_sleep);
+
+  // Call the Arduino setup
+  setup();
+
+  // Call the wake up routine
+  wakeUpRoutine();
+
+  // This is our "loop"
+  while (1) {
+    goToDeepSleep(DEEP_SLEEP_INTERVAL);
+  }
 }
